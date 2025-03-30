@@ -1,5 +1,5 @@
 import { Slot, usePathname, useRouter } from 'expo-router';
-import { ShareIntentProvider, useShareIntentContext } from "expo-share-intent";
+import { ShareIntentProvider, useShareIntent, useShareIntentContext } from "expo-share-intent";
 import { ThemeProvider } from '@react-navigation/native';
 import "../global.css";
 import { useEffect } from 'react';
@@ -39,7 +39,7 @@ export default function RootLayout() {
 
     const router = useRouter();
 
-    const { hasShareIntent } = useShareIntentContext();
+    const { hasShareIntent } = useShareIntent();
 
     useEffect(() => {
         if (hasShareIntent) {

@@ -9,7 +9,8 @@
     "web": "expo start --web",
     "nuke": "rm -rf ./node_modules && rm -rf ./ios && rm -rf ./android && rm -rf ./.expo",
     "nuke:ios": "rm -rf ./ios",
-    "nuke:android": "rm -rf ./android"
+    "nuke:android": "rm -rf ./android",
+    "postinstall": "cd ../../ && patch-package"
   },
   "dependencies": {
     "@expo/dom-webview": "^0.0.2",

@@ -1,4 +1,5 @@
-import { router, Slot, usePathname } from 'expo-router';
+import { Slot, usePathname, useRouter } from 'expo-router';
+import { ShareIntentProvider, useShareIntentContext } from "expo-share-intent";
 import { ThemeProvider } from '@react-navigation/native';
 import "../global.css";
 import { useEffect } from 'react';
@@ -10,11 +11,8 @@ import { StatusBar } from 'expo-status-bar';
 import { ActionSheetProvider } from '@expo/react-native-action-sheet';
 import { PortalHost } from '@rn-primitives/portal';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { useAsyncStorage } from '@react-native-async-storage/async-storage';
 import { Toaster } from 'sonner-native';
 import { LogBox } from 'react-native';
-import { getMessaging } from '@react-native-firebase/messaging';
-import { setDefaultSite } from '@lib/auth';
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
@@ -37,75 +35,40 @@ if (__DEV__) {
     ]);
 }
 
-const messaging = getMessaging()
-
 export default function RootLayout() {
+
+    const router = useRouter();
+
+    const { hasShareIntent } = useShareIntentContext();
+
+    useEffect(() => {
+        if (hasShareIntent) {
+            // we want to handle share intent event in a specific page
+            console.debug("[expo-router-index] redirect to ShareIntent screen");
+            router.replace({
+                pathname: "shareintent",
+            });
+        }
+    }, [hasShareIntent]);
 
     const path = usePathname()
     console.log(path)
-
-    const { getItem } = useAsyncStorage(`default-site`)
-
-
-    useEffect(() => {
-
-        const onMount = async () => {
-            // Get the defualt site from the async storage
-            // Also check if the app was started by a notification
-            const initialNotification = await messaging.getInitialNotification();
-
-            if (initialNotification) {
-                if (initialNotification.data?.channel_id && initialNotification.data?.sitename) {
-                    setDefaultSite(initialNotification.data.sitename as string)
-                    let path = 'chat'
-                    if (initialNotification.data.is_thread) {
-                        path = 'thread'
-                    }
-                    router.navigate(`/${initialNotification.data.sitename}/${path}/${initialNotification.data.channel_id}`, {
-                        withAnchor: true
-                    })
-
-                    return
-                }
-            }
-
-            // If not started by notification
-            // On load, check if the user has a site set
-            const defaultSite = await getItem()
-            if (defaultSite) {
-                router.replace(`/${defaultSite}`)
-            } else {
-                router.replace('/landing')
-            }
-        }
-
-        // Handle notification open when app is in background
-        const unsubscribeOnNotificationOpen = messaging.onNotificationOpenedApp(async (remoteMessage) => {
-            console.log('Notification opened app from background state:', remoteMessage);
-            if (remoteMessage.data?.channel_id && remoteMessage.data?.sitename) {
-                setDefaultSite(remoteMessage.data.sitename as string)
-                let path = 'chat'
-                if (remoteMessage.data.is_thread) {
-                    path = 'thread'
-                }
-                router.navigate(`/${remoteMessage.data.sitename}/${path}/${remoteMessage.data.channel_id}`, {
-                    withAnchor: true
-                })
-            }
-        });
-
-        onMount()
-        // Cleanup function
-        return () => {
-            unsubscribeOnNotificationOpen();
-        };
-    }, []);
 
     useInitialAndroidBarSync();
     const { colorScheme, isDarkColorScheme } = useColorScheme();
 
     return (
-        <>
+        <ShareIntentProvider
+            options={{
+                debug: true,
+                resetOnBackground: true,
+                onResetShareIntent: () =>
+                    // used when app going in background and when the reset button is pressed
+                    router.replace({
+                        pathname: "/",
+                    }),
+            }}
+        >
             <StatusBar
                 key={`root-status-bar-${isDarkColorScheme ? 'light' : 'dark'}`}
                 style={isDarkColorScheme ? 'light' : 'dark'}
@@ -132,6 +95,6 @@ export default function RootLayout() {
                     swipeToDismissDirection='up'
                 />
             </GestureHandlerRootView>
-        </>
+        </ShareIntentProvider>
     )
 }

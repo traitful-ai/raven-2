@@ -70,7 +70,8 @@
           }
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-share-intent"
     ],
     "extra": {
       "router": {

@@ -13,7 +13,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "cd frontend && yarn dev",
     "build": "cd frontend && yarn build",
-    "postinstall": "yarn install-web && yarn install-desk",
+    "postinstall": "yarn install-web && yarn install-desk && patch-package",
     "install-desk": "cd raven && yarn install",
     "install-web": "cd frontend && yarn install"
   },
@@ -23,5 +23,7 @@
   "devDependencies": {
     "turbo": "^2.3.3"
   },
-  "dependencies": {}
+  "dependencies": {
+    "patch-package": "^8.0.0"
+  }
 }

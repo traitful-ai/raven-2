@@ -1,5 +1,5 @@
 import { Message } from "../../../../../../types/Messaging/Message"
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArchivedChannelBox } from "../chat-footer/ArchivedChannelBox"
 import { ChannelListItem, DMChannelListItem } from "@/utils/channel/ChannelListProvider"
 import { JoinChannelBox } from "../chat-footer/JoinChannelBox"
@@ -19,11 +19,14 @@ import clsx from "clsx"
 import { HStack, Stack } from "@/components/layout/Stack"
 import TypingIndicator from "../ChatInput/TypingIndicator/TypingIndicator"
 import { useTyping } from "../ChatInput/TypingIndicator/useTypingIndicator"
+import { useBotProcessingState } from "@/hooks/useBotProcessingState"
 import { Label } from "@/components/common/Form"
 import { RavenMessage } from "@/types/RavenMessaging/RavenMessage"
 import { useSWRConfig } from "frappe-react-sdk"
 import { GetMessagesResponse } from "./useChatStream"
 import { useIsMobile } from "@/hooks/useMediaQuery"
+import { useCargoWiseBotDetection } from "@/hooks/useCargoWiseBotDetection"
+// import { ShipmentPanel } from "../ShipmentPanel/ShipmentPanel" // Temporarily hidden
 
 const COOL_PLACEHOLDERS = [
     "Delivering messages atop dragons 🐉 is available on a chargeable basis.",
@@ -44,6 +47,12 @@ export const ChatBoxBody = ({ channelData }: ChatBoxBodyProps) => {
 
     const { name: user } = useUserData()
     const { channelMembers, isLoading } = useFetchChannelMembers(channelData.name)
+
+    // Check if this is a DM with CargoWiseBot
+    const { isCargoWiseBotChannel } = useCargoWiseBotDetection(
+        channelData.name, 
+        channelData?.is_direct_message === 1
+    )
 
     const { onUserType, stopTyping } = useTyping(channelData.name)
 
@@ -152,6 +161,14 @@ export const ChatBoxBody = ({ channelData }: ChatBoxBodyProps) => {
 
     const { sendMessage, loading } = useSendMessage(channelData.name, uploadFiles, onMessageSendCompleted, selectedMessage)
 
+    // Track bot processing state for this channel
+    const { isProcessing: isBotProcessing } = useBotProcessingState(channelData.name)
+    
+    // Debug logging for bot processing state
+    useEffect(() => {
+        console.log(`🔔 Bot processing state changed for channel ${channelData.name}:`, isBotProcessing)
+    }, [isBotProcessing, channelData.name])
+
     const PreviousMessagePreview = ({ selectedMessage }: { selectedMessage: any }) => {
 
         if (selectedMessage) {
@@ -230,6 +247,10 @@ export const ChatBoxBody = ({ channelData }: ChatBoxBodyProps) => {
                     pinnedMessagesString={channelData.pinned_messages_string}
                     replyToMessage={handleReplyAction}
                 />
+                {/* Temporarily hidden - will be shown later once feature is complete */}
+                {/* {isCargoWiseBotChannel && (
+                    <ShipmentPanel channelID={channelData.name} />
+                )} */}
                 {canUserSendMessage &&
                     <Stack>
                         <TypingIndicator channel={channelData.name} />
@@ -249,7 +270,7 @@ export const ChatBoxBody = ({ channelData }: ChatBoxBodyProps) => {
                             replyMessage={selectedMessage}
                             sessionStorageKey={`tiptap-${channelData.name}`}
                             onMessageSend={sendMessage}
-                            messageSending={loading}
+                            messageSending={loading || isBotProcessing}
                             slotBefore={<Flex direction='column' justify='center' hidden={!selectedMessage && !files.length}>
                                 {selectedMessage && <PreviousMessagePreview selectedMessage={selectedMessage} />}
                                 {files && files.length > 0 && <Flex gap='2' width='100%' align='stretch' px='2' p='2' wrap='wrap'>

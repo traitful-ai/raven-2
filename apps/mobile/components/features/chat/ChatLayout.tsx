@@ -13,6 +13,8 @@ import { JoinChannelBox } from '@components/features/chat/ChatFooter/JoinChannel
 import { ArchivedChannelBox } from '@components/features/chat/ChatFooter/ArchivedChannelBox';
 import useShouldJoinChannel from '@hooks/useShouldJoinChannel';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useCargoWiseBotDetection } from '@hooks/useCargoWiseBotDetection';
+// import { ShipmentPanel } from './ShipmentPanel/ShipmentPanel'; // Temporarily hidden
 
 export const useGradualAnimation = () => {
     const height = useSharedValue(0)
@@ -74,6 +76,12 @@ const ChatLayout = ({ channelID, isThread = false, pinnedMessagesString }: Props
 
     const { canUserSendMessage, shouldShowJoinBox, channelData, myProfile, channelMemberProfile } = useShouldJoinChannel(channelID, isThread)
 
+    // Check if this is a DM with CargoWiseBot
+    const { isCargoWiseBotChannel } = useCargoWiseBotDetection(
+        channelID, 
+        channelData?.is_direct_message === 1
+    )
+
     const fakeView = useAnimatedStyle(() => {
         return {
             height: Math.abs(height.value),
@@ -121,6 +129,10 @@ const ChatLayout = ({ channelID, isThread = false, pinnedMessagesString }: Props
                     onMomentumScrollEnd={checkIfNearBottom}
                     pinnedMessagesString={pinnedMessagesString}
                 />
+                {/* Temporarily hidden - will be shown later once feature is complete */}
+                {/* {isCargoWiseBotChannel && (
+                    <ShipmentPanel channelID={channelID} />
+                )} */}
                 <View className='min-h-16'>
                     {
                         canUserSendMessage ?

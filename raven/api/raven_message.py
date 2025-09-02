@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import timedelta
 
 import frappe
@@ -9,11 +10,15 @@ from frappe.query_builder.functions import Coalesce, Count
 from raven.api.raven_channel import create_direct_message_channel, get_peer_user_id
 from raven.utils import get_channel_member, is_channel_member, track_channel_visit
 
+import httpx
 
 @frappe.whitelist(methods=["POST"])
 def send_message(
 	channel_id, text, is_reply=False, linked_message=None, json_content=None, send_silently=False
 ):
+	channel = frappe.get_doc("Raven Channel", channel_id)
+	
+	# Create the user's message first
 	if is_reply:
 		doc = frappe.get_doc(
 			{
@@ -41,7 +46,67 @@ def send_message(
 		doc.flags.send_silently = True
 
 	doc.insert()
+	
+	# After the user's message is inserted, check if we need to send a bot response
+	check_and_send_bot_response(channel, channel_id, text)
+	
 	return doc
+
+
+def check_and_send_bot_response(channel, channel_id, text):
+	"""
+	Check if this is a DM with CargoWiseBot and send a response if needed
+	"""
+	# Check if this is a DM with a bot
+	if channel.is_direct_message:
+		# Get channel members to find if any are bots
+		members = frappe.get_all(
+			"Raven Channel Member",
+			filters={"channel_id": channel_id},
+			fields=["user_id"]
+		)
+		
+		for member in members:
+			# Check if this user_id is a bot (via Raven User)
+			raven_user = frappe.db.get_value("Raven User", member.user_id, ["type", "bot"], as_dict=True)
+			if raven_user and raven_user.type == "Bot" and raven_user.bot:
+				# Get the bot name to check if it's CargoWiseBot
+				bot_name = frappe.db.get_value("Raven Bot", raven_user.bot, "bot_name")
+				print(f"🤖 MESSAGE TO BOT: {raven_user.bot} (name: {bot_name}) in channel {channel_id}")
+				
+				# Only respond if this is CargoWiseBot
+				if bot_name == "CargoWiseBot":
+					print(f"✅ CARGOWISE BOT DETECTED: Sending response")
+					
+					# Emit bot processing start event
+					frappe.publish_realtime(
+						"bot_processing_start",
+						{
+							"channel_id": channel_id,
+							"bot_name": bot_name
+						},
+						doctype="Raven Channel",
+						docname=channel_id,
+						after_commit=True
+					)
+					
+					# Send immediate "thinking" message
+					thinking_message_id = send_thinking_message(channel_id, raven_user.bot)
+					
+					# Use frappe.enqueue to send actual response after a small delay
+					frappe.enqueue(
+						send_bot_response,
+						channel_id=channel_id,
+						bot_name=raven_user.bot,
+						user_message=text,
+						thinking_message_id=thinking_message_id,
+						queue="short",
+						timeout=30,
+						is_async=True
+					)
+				else:
+					print(f"❌ NOT CARGOWISE BOT: Ignoring message to {bot_name}")
+				break
 
 
 @frappe.whitelist()
@@ -104,6 +169,7 @@ def save_message(message_id, add=False):
 	Save the message as a bookmark
 	"""
 	from frappe.desk.like import toggle_like
+	import time
 
 	toggle_like("Raven Message", message_id, add)
 
@@ -571,3 +637,254 @@ def add_forwarded_message_to_channel(channel_id, forwarded_message):
 	)
 	doc.insert()
 	return "message forwarded"
+
+
+def send_thinking_message(channel_id, bot_raven_user):
+	"""
+	Send an immediate "thinking" message that will be replaced later
+	"""
+	try:
+		thinking_doc = frappe.get_doc({
+			"doctype": "Raven Message",
+			"channel_id": channel_id,
+			"text": "🤔 Freightify AI is working on your request...",
+			"message_type": "Text",
+			"owner": bot_raven_user,
+			"is_bot_message": 1,
+			"bot": bot_raven_user
+		})
+		thinking_doc.insert(ignore_permissions=True)
+		print(f"💭 THINKING MESSAGE SENT: {thinking_doc.name}")
+		return thinking_doc.name
+		
+	except Exception as e:
+		print(f"❌ ERROR sending thinking message: {str(e)}")
+		frappe.log_error(f"Error sending thinking message: {str(e)}", "Bot Thinking Message Error")
+		return None
+
+
+def process_bot_file_attachments(file_content, channel_id, bot_doc):
+	"""
+	Process file_content array from bot API response and create file attachments
+	Each file object should have: {'filename': 'file.pdf', 'base64object': 'base64string'}
+	"""
+	import base64
+	
+	file_message_ids = []
+	
+	for file_obj in file_content:
+		try:
+			filename = file_obj.get('filename', 'untitled_file')
+			base64_string = file_obj.get('base64object', '')
+			
+			if not base64_string:
+				print(f"⚠️ WARNING: No base64 content found for file {filename}")
+				continue
+				
+			print(f"📎 PROCESSING FILE: {filename}")
+			
+			# Decode base64 content
+			file_data = base64.b64decode(base64_string)
+			
+			# Create a file document using the same pattern as the upload_file_with_message API
+			file_doc = frappe.get_doc({
+				"doctype": "File",
+				"file_name": filename,
+				"content": file_data,
+				"is_private": 1,
+			})
+			file_doc.insert(ignore_permissions=True)
+			
+			print(f"📁 FILE CREATED: {file_doc.file_url} for {filename}")
+			
+			# Send file message using bot's send_message method
+			message_id = bot_doc.send_message(
+				channel_id=channel_id,
+				text=f"📎 {filename}",
+				file=file_doc.file_url
+			)
+			
+			file_message_ids.append(message_id)
+			print(f"✅ FILE MESSAGE SENT: {filename} as message {message_id}")
+			
+		except Exception as e:
+			print(f"❌ ERROR processing file {file_obj.get('filename', 'unknown')}: {str(e)}")
+			frappe.log_error(f"Error processing bot file attachment: {str(e)}", "Bot File Processing Error")
+			continue
+	
+	return file_message_ids
+
+
+def send_bot_response(channel_id, bot_name, user_message, thinking_message_id=None):
+	"""
+	Send a bot response by calling the chat API and polling for completion
+	"""
+	print(f"🤖 SENDING BOT RESPONSE: Bot {bot_name} responding to '{user_message}'")
+	
+	# Initialize default response text
+	response_text = "Sorry, I'm having trouble processing your request right now."
+	
+	# Make synchronous HTTP request
+	try:
+		response = httpx.post(
+			f"http://52.140.80.226/api/v1/chat/{frappe.session.user}/{channel_id}/messages",
+			headers={
+				"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
+				"Content-Type": "application/json"
+			},
+			json={
+				"content": user_message
+			},
+			timeout=10.0
+		)
+		response.raise_for_status()  # Raise an exception for bad status codes		
+		response_data = response.json()
+		print(f"📤 POST RESPONSE: {response_data}")
+		
+		message_id = response_data.get("message_id")
+		user_id = response_data.get("user_id")
+		thread_id = response_data.get("thread_id")
+		
+		if not message_id or not user_id or not thread_id:
+			print("❌ ERROR: Missing required fields in API response")
+			response_text = "Error: Invalid response from API"
+		else:
+			# Poll the message status until completed
+			max_attempts = 30  # Maximum polling attempts
+			poll_interval = 2  # Seconds between polls
+			
+			for attempt in range(max_attempts):
+				print(f'🔄 POLLING ATTEMPT {attempt + 1}/{max_attempts}')
+				try:
+					status_response = httpx.get(
+						f"http://52.140.80.226/api/v1/chat/{user_id}/{thread_id}/messages/{message_id}",
+						headers={
+							"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
+							"Content-Type": "application/json"
+						},
+						timeout=10.0
+					)
+					status_response.raise_for_status()
+					status_data = status_response.json()
+					print(f"📥 POLL RESPONSE: {status_data}")
+					
+					status = status_data.get("status")
+					if status == "completed":
+						response_text = status_data.get("response_content", "No response content available")
+						file_content = status_data.get("file_content", [])
+						print(f"✅ POLLING COMPLETE: Got response after {attempt + 1} attempts")
+						print(f"📎 FILES FOUND: {len(file_content)} files in response")
+						break
+					elif status == "failed":
+						response_text = "Sorry, I encountered an error processing your request."
+						file_content = []
+						print(f"❌ POLLING FAILED: Request failed after {attempt + 1} attempts")
+						break
+					else:
+						print(f"⏳ POLLING: Status is '{status}', continuing...")
+						if attempt < max_attempts - 1:  # Don't sleep on the last attempt
+							time.sleep(poll_interval)
+				
+				except Exception as poll_error:
+					print(f"❌ ERROR during polling attempt {attempt + 1}: {str(poll_error)}")
+					if attempt == max_attempts - 1:  # Last attempt
+						response_text = "Sorry, I'm having trouble processing your request right now."
+						break
+					if attempt < max_attempts - 1:
+						time.sleep(poll_interval)
+			else:
+				# This executes if the loop completed without breaking
+				response_text = "Sorry, your request is taking longer than expected to process."
+				file_content = []
+				print(f"⏰ POLLING TIMEOUT: Reached maximum attempts ({max_attempts})")
+				
+	except Exception as e:
+		print(f"❌ ERROR making HTTP request: {str(e)}")
+		frappe.log_error(f"Error making HTTP request: {str(e)}", "Bot HTTP Request Error")
+		response_text = "Sorry, I'm experiencing technical difficulties."
+		file_content = []
+	
+	# Get the bot's Raven User ID
+	bot_raven_user = frappe.db.get_value("Raven Bot", bot_name, "raven_user")
+	if not bot_raven_user:
+		print(f"❌ ERROR: Could not find raven_user for bot {bot_name}")
+		return
+	
+	# Update the thinking message if it exists, otherwise create a new message
+	try:
+		# Get the bot document to use its send_message method with markdown support
+		bot_doc = frappe.get_doc("Raven Bot", bot_name)
+		
+		# Process file attachments if any
+		file_message_ids = []
+		if file_content and len(file_content) > 0:
+			print(f"📎 PROCESSING {len(file_content)} file attachments")
+			file_message_ids = process_bot_file_attachments(file_content, channel_id, bot_doc)
+		
+		if thinking_message_id:
+			# Replace the thinking message with the actual response using markdown
+			thinking_doc = frappe.get_doc("Raven Message", thinking_message_id)
+			# Convert markdown to HTML using the same method as bot.send_message
+			html_text = frappe.utils.md_to_html(response_text).rstrip("\n")
+			thinking_doc.text = html_text
+			thinking_doc.save(ignore_permissions=True)
+			frappe.db.commit()  # Ensure the change is committed
+			print(f"✅ SUCCESS: Thinking message updated with bot response (markdown converted)!")
+			
+			# Emit bot processing end event
+			print(f"🔔 EMITTING bot_processing_end for channel {channel_id} (thinking message updated)")
+			frappe.publish_realtime(
+				"bot_processing_end",
+				{
+					"channel_id": channel_id,
+					"bot_name": bot_name
+				},
+				doctype="Raven Channel",
+				docname=channel_id,
+				after_commit=True
+			)
+			
+			return {"message_id": thinking_message_id, "file_message_ids": file_message_ids}
+		else:
+			# Create a new message using the bot's send_message method with markdown support
+			message_id = bot_doc.send_message(
+				channel_id=channel_id,
+				text=response_text,
+				markdown=True
+			)
+			frappe.db.commit()  # Ensure the change is committed
+			print(f"✅ SUCCESS: New bot response sent successfully with markdown support!")
+			
+			# Emit bot processing end event
+			print(f"🔔 EMITTING bot_processing_end for channel {channel_id} (new message created)")
+			frappe.publish_realtime(
+				"bot_processing_end",
+				{
+					"channel_id": channel_id,
+					"bot_name": bot_name
+				},
+				doctype="Raven Channel",
+				docname=channel_id,
+				after_commit=True
+			)
+			
+			return {"message_id": message_id, "file_message_ids": file_message_ids}
+		
+	except Exception as e:
+		print(f"❌ ERROR sending bot response: {str(e)}")
+		frappe.log_error(f"Error sending bot response: {str(e)}", "Bot Response Error")
+		
+		# Emit bot processing end event even on error
+		print(f"🔔 EMITTING bot_processing_end for channel {channel_id} (error occurred)")
+		frappe.publish_realtime(
+			"bot_processing_end",
+			{
+				"channel_id": channel_id,
+				"bot_name": bot_name
+			},
+			doctype="Raven Channel",
+			docname=channel_id,
+			after_commit=True
+		)
+		
+		return None

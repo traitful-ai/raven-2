@@ -547,6 +547,13 @@ const Tiptap = forwardRef(({ isEdit, slotBefore, fileProps, onMessageSend, onUpA
         }
     }, [editor, isDesktop, isEdit, replyMessage])
 
+    // Control editor editable state based on messageSending prop
+    useEffect(() => {
+        if (editor) {
+            editor.setEditable(!messageSending)
+        }
+    }, [editor, messageSending])
+
     useImperativeHandle(ref, () => ({
         focusEditor: () => {
             editor?.chain().focus().run()

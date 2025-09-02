@@ -16,6 +16,7 @@ import { UserMentions } from "./mentions"
 import ReplyMessagePreview from "./ReplyMessagePreview"
 import AIEventIndicator from "./AIEventIndicator"
 import { useTyping } from "@raven/lib/hooks/useTypingIndicator"
+import { useBotProcessingState } from "@hooks/useBotProcessingState"
 import * as ContextMenu from 'zeego/context-menu';
 
 interface ChatInputProps {
@@ -43,6 +44,9 @@ const ChatInput = ({ channelID, onSendMessage }: ChatInputProps) => {
 
 
     const { sendMessage, loading } = useSendMessage(siteID, channelID as string, cleanupAfterSendingMessage)
+
+    // Track bot processing state for this channel
+    const { isProcessing: isBotProcessing } = useBotProcessingState(channelID)
 
     const { colors } = useColorScheme()
 
@@ -104,6 +108,7 @@ const ChatInput = ({ channelID, onSendMessage }: ChatInputProps) => {
                 <MentionInput
                     value={content}
                     multiline
+                    editable={!loading && !isBotProcessing}
                     placeholderTextColor={colors.grey}
                     placeholder="Type a message..."
                     onChange={onContentChange}
@@ -136,7 +141,7 @@ const ChatInput = ({ channelID, onSendMessage }: ChatInputProps) => {
                 <ContextMenu.Root>
                     <ContextMenu.Trigger>
                         <Pressable
-                            disabled={loading}
+                            disabled={loading || isBotProcessing}
                             // Add a subtle ripple effect on Android
                             android_ripple={{ color: 'rgba(0,0,0,0.1)', borderless: false }}
                             className="w-8 h-8 flex items-center justify-center rounded-full"

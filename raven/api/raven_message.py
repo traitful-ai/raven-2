@@ -48,12 +48,12 @@ def send_message(
 	doc.insert()
 	
 	# After the user's message is inserted, check if we need to send a bot response
-	check_and_send_bot_response(channel, channel_id, text)
+	check_and_send_bot_response(channel, channel_id, text, doc)
 	
 	return doc
 
 
-def check_and_send_bot_response(channel, channel_id, text):
+def check_and_send_bot_response(channel, channel_id, text, user_message_doc):
 	"""
 	Check if this is a DM with CargoWiseBot and send a response if needed
 	"""
@@ -99,6 +99,7 @@ def check_and_send_bot_response(channel, channel_id, text):
 						channel_id=channel_id,
 						bot_name=raven_user.bot,
 						user_message=text,
+						user_message_doc=user_message_doc,
 						thinking_message_id=thinking_message_id,
 						queue="short",
 						timeout=30,
@@ -715,26 +716,103 @@ def process_bot_file_attachments(file_content, channel_id, bot_doc):
 	return file_message_ids
 
 
-def send_bot_response(channel_id, bot_name, user_message, thinking_message_id=None):
+def process_user_message_files(user_message_doc):
+	"""
+	Extract and process files attached to a user message for bot API
+	Returns array of file dictionaries with file_type and file_content (base64)
+	"""
+	import base64
+	import os
+	
+	files_data = []
+	
+	try:
+		# Check if the message has a file attached
+		if not user_message_doc.file:
+			return files_data
+			
+		print(f"📎 PROCESSING FILE: {user_message_doc.file}")
+		
+		# Get the file document using file_url
+		file_docs = frappe.get_all("File", filters={"file_url": user_message_doc.file}, limit=1)
+		if not file_docs:
+			print(f"❌ ERROR: File document not found for URL {user_message_doc.file}")
+			return files_data
+		
+		file_doc = frappe.get_doc("File", file_docs[0].name)
+		
+		# Check file size (10MB limit = 10 * 1024 * 1024 bytes)
+		max_size = 10 * 1024 * 1024
+		if file_doc.file_size and file_doc.file_size > max_size:
+			print(f"⚠️ WARNING: File {file_doc.file_name} is too large ({file_doc.file_size} bytes > {max_size} bytes)")
+			return files_data
+		
+		# Get file content using Frappe's method
+		try:
+			file_content = file_doc.get_content()
+		except Exception as e:
+			print(f"❌ ERROR: Could not get file content: {str(e)}")
+			return files_data
+		
+		if file_content:
+			# Convert to base64
+			base64_content = base64.b64encode(file_content).decode('utf-8')
+			
+			# Extract file extension for file_type
+			file_name = file_doc.file_name or "unknown"
+			file_extension = os.path.splitext(file_name)[1].lstrip('.').lower()
+			if not file_extension:
+				file_extension = "unknown"
+			
+			files_data.append({
+				"file_type": file_extension,
+				"file_content": base64_content
+			})
+			
+			print(f"✅ FILE PROCESSED: {file_name} ({len(base64_content)} chars base64, type: {file_extension})")
+		
+	except Exception as e:
+		print(f"❌ ERROR processing user message files: {str(e)}")
+		frappe.log_error(f"Error processing user message files: {str(e)}", "Bot File Processing Error")
+	
+	return files_data
+
+
+def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None, thinking_message_id=None):
 	"""
 	Send a bot response by calling the chat API and polling for completion
 	"""
 	print(f"🤖 SENDING BOT RESPONSE: Bot {bot_name} responding to '{user_message}'")
+	
+	# Process attached files if any
+	files_data = []
+	if user_message_doc:
+		files_data = process_user_message_files(user_message_doc)
+		if files_data:
+			print(f"📎 PROCESSED {len(files_data)} file attachments for bot API")
 	
 	# Initialize default response text
 	response_text = "Sorry, I'm having trouble processing your request right now."
 	
 	# Make synchronous HTTP request
 	try:
+		# Prepare request payload
+		request_data = {
+			"content": user_message
+		}
+		
+		# Add files if any are attached
+		if files_data:
+			request_data["files"] = files_data
+			print(f"📤 INCLUDING {len(files_data)} files in bot API request")
+		
 		response = httpx.post(
 			f"http://52.140.80.226/api/v1/chat/{frappe.session.user}/{channel_id}/messages",
 			headers={
 				"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
 				"Content-Type": "application/json"
 			},
-			json={
-				"content": user_message
-			},
+			json=request_data,
 			timeout=10.0
 		)
 		response.raise_for_status()  # Raise an exception for bad status codes		

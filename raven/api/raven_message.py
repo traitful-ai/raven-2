@@ -667,7 +667,7 @@ def send_thinking_message(channel_id, bot_raven_user):
 def process_bot_file_attachments(file_content, channel_id, bot_doc):
 	"""
 	Process file_content array from bot API response and create file attachments
-	Each file object should have: {'filename': 'file.pdf', 'base64object': 'base64string'}
+	Each file object should have: {'file_name': 'file.pdf', 'file_content': 'base64string'}
 	"""
 	import base64
 	
@@ -675,8 +675,8 @@ def process_bot_file_attachments(file_content, channel_id, bot_doc):
 	
 	for file_obj in file_content:
 		try:
-			filename = file_obj.get('filename', 'untitled_file')
-			base64_string = file_obj.get('base64object', '')
+			filename = file_obj.get('file_name', 'untitled_file')
+			base64_string = file_obj.get('file_content', '')
 			
 			if not base64_string:
 				print(f"⚠️ WARNING: No base64 content found for file {filename}")
@@ -709,7 +709,7 @@ def process_bot_file_attachments(file_content, channel_id, bot_doc):
 			print(f"✅ FILE MESSAGE SENT: {filename} as message {message_id}")
 			
 		except Exception as e:
-			print(f"❌ ERROR processing file {file_obj.get('filename', 'unknown')}: {str(e)}")
+			print(f"❌ ERROR processing file {file_obj.get('file_name', 'unknown')}: {str(e)}")
 			frappe.log_error(f"Error processing bot file attachment: {str(e)}", "Bot File Processing Error")
 			continue
 	
@@ -849,7 +849,7 @@ def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None,
 					status = status_data.get("status")
 					if status == "completed":
 						response_text = status_data.get("response_content", "No response content available")
-						file_content = status_data.get("file_content", [])
+						file_content = status_data.get("files", [])
 						print(f"✅ POLLING COMPLETE: Got response after {attempt + 1} attempts")
 						print(f"📎 FILES FOUND: {len(file_content)} files in response")
 						break

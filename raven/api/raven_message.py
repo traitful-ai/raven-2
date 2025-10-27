@@ -807,7 +807,7 @@ def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None,
 			print(f"📤 INCLUDING {len(files_data)} files in bot API request")
 		
 		response = httpx.post(
-			f"http://52.140.80.226/api/v1/chat/{frappe.session.user}/{channel_id}/messages",
+			f"http://4.186.8.36/api/v1/chat/{frappe.session.user}/{channel_id}/messages",
 			headers={
 				"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
 				"Content-Type": "application/json"
@@ -835,7 +835,7 @@ def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None,
 				print(f'🔄 POLLING ATTEMPT {attempt + 1}/{max_attempts}')
 				try:
 					status_response = httpx.get(
-						f"http://52.140.80.226/api/v1/chat/{user_id}/{thread_id}/messages/{message_id}",
+						f"http://4.186.8.36/api/v1/chat/{user_id}/{thread_id}/messages/{message_id}",
 						headers={
 							"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
 							"Content-Type": "application/json"

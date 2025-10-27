@@ -810,7 +810,8 @@ def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None,
 			f"http://4.186.8.36/api/v1/chat/{frappe.session.user}/{channel_id}/messages",
 			headers={
 				"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
-				"Content-Type": "application/json"
+				"Content-Type": "application/json",
+				"X-Organization-ID": "norts1services.wisegrid.net",
 			},
 			json=request_data,
 			timeout=10.0
@@ -838,7 +839,8 @@ def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None,
 						f"http://4.186.8.36/api/v1/chat/{user_id}/{thread_id}/messages/{message_id}",
 						headers={
 							"Authorization": "Bearer #3re15a8$0nDoWtrAItfu7(#a70k3N",
-							"Content-Type": "application/json"
+							"Content-Type": "application/json",
+							"X-Organization-ID": "norts1services.wisegrid.net",
 						},
 						timeout=10.0
 					)

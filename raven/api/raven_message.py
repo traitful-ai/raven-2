@@ -765,7 +765,7 @@ def process_user_message_files(user_message_doc):
 				file_extension = "unknown"
 			
 			files_data.append({
-				"file_type": file_extension,
+				"file_name": file_name,
 				"file_content": base64_content
 			})
 			

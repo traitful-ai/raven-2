@@ -175,4 +175,9 @@ def upload_file_with_message():
 
 	message_doc.save()
 
+	# Check if we need to send a bot response (for DM with bots)
+	from raven.api.raven_message import check_and_send_bot_response
+	channel = frappe.get_doc("Raven Channel", message_doc.channel_id)
+	check_and_send_bot_response(channel, message_doc.channel_id, message_doc.text or "", message_doc)
+
 	return message_doc

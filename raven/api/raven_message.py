@@ -110,6 +110,65 @@ def check_and_send_bot_response(channel, channel_id, text, user_message_doc):
 				break
 
 
+def check_and_send_bot_response_for_batch(channel, channel_id, text, user_message_docs):
+	"""
+	Check if this is a DM with CargoWiseBot and send a response if needed
+	This version handles multiple message documents (batch upload)
+	"""
+	# Check if this is a DM with a bot
+	if channel.is_direct_message:
+		# Get channel members to find if any are bots
+		members = frappe.get_all(
+			"Raven Channel Member",
+			filters={"channel_id": channel_id},
+			fields=["user_id"]
+		)
+		
+		for member in members:
+			# Check if this user_id is a bot (via Raven User)
+			raven_user = frappe.db.get_value("Raven User", member.user_id, ["type", "bot"], as_dict=True)
+			if raven_user and raven_user.type == "Bot" and raven_user.bot:
+				# Get the bot name to check if it's CargoWiseBot
+				bot_name = frappe.db.get_value("Raven Bot", raven_user.bot, "bot_name")
+				print(f"🤖 BATCH MESSAGE TO BOT: {raven_user.bot} (name: {bot_name}) in channel {channel_id} with {len(user_message_docs)} files")
+				
+				# Only respond if this is CargoWiseBot
+				if bot_name == "CargoWiseBot":
+					print(f"✅ CARGOWISE BOT DETECTED: Sending response for batch upload")
+					
+					# Emit bot processing start event
+					frappe.publish_realtime(
+						"bot_processing_start",
+						{
+							"channel_id": channel_id,
+							"bot_name": bot_name
+						},
+						doctype="Raven Channel",
+						docname=channel_id,
+						after_commit=True
+					)
+					
+					# Send immediate "thinking" message
+					thinking_message_id = send_thinking_message(channel_id, raven_user.bot)
+					
+					# Use frappe.enqueue to send actual response after a small delay
+					# Pass all message docs for batch processing
+					frappe.enqueue(
+						send_bot_response,
+						channel_id=channel_id,
+						bot_name=raven_user.bot,
+						user_message=text,
+						user_message_docs=user_message_docs,
+						thinking_message_id=thinking_message_id,
+						queue="short",
+						timeout=30,
+						is_async=True
+					)
+				else:
+					print(f"❌ NOT CARGOWISE BOT: Ignoring message to {bot_name}")
+				break
+
+
 @frappe.whitelist()
 def fetch_recent_files(channel_id):
 	"""
@@ -716,9 +775,10 @@ def process_bot_file_attachments(file_content, channel_id, bot_doc):
 	return file_message_ids
 
 
-def process_user_message_files(user_message_doc):
+def process_user_message_files(user_message_docs):
 	"""
-	Extract and process files attached to a user message for bot API
+	Extract and process files attached to user messages for bot API
+	Accepts either a single message doc or a list of message docs
 	Returns array of file dictionaries with file_type and file_content (base64)
 	"""
 	import base64
@@ -726,50 +786,55 @@ def process_user_message_files(user_message_doc):
 	
 	files_data = []
 	
+	# Handle both single doc and list of docs
+	if not isinstance(user_message_docs, list):
+		user_message_docs = [user_message_docs]
+	
 	try:
-		# Check if the message has a file attached
-		if not user_message_doc.file:
-			return files_data
+		for user_message_doc in user_message_docs:
+			# Check if the message has a file attached
+			if not user_message_doc.file:
+				continue
+				
+			print(f"📎 PROCESSING FILE: {user_message_doc.file}")
 			
-		print(f"📎 PROCESSING FILE: {user_message_doc.file}")
-		
-		# Get the file document using file_url
-		file_docs = frappe.get_all("File", filters={"file_url": user_message_doc.file}, limit=1)
-		if not file_docs:
-			print(f"❌ ERROR: File document not found for URL {user_message_doc.file}")
-			return files_data
-		
-		file_doc = frappe.get_doc("File", file_docs[0].name)
-		
-		# Check file size (10MB limit = 10 * 1024 * 1024 bytes)
-		max_size = 10 * 1024 * 1024
-		if file_doc.file_size and file_doc.file_size > max_size:
-			print(f"⚠️ WARNING: File {file_doc.file_name} is too large ({file_doc.file_size} bytes > {max_size} bytes)")
-			return files_data
-		
-		# Get file content using Frappe's method
-		try:
-			file_content = file_doc.get_content()
-		except Exception as e:
-			print(f"❌ ERROR: Could not get file content: {str(e)}")
-			return files_data
-		
-		if file_content:
-			# Convert to base64
-			base64_content = base64.b64encode(file_content).decode('utf-8')
+			# Get the file document using file_url
+			file_docs = frappe.get_all("File", filters={"file_url": user_message_doc.file}, limit=1)
+			if not file_docs:
+				print(f"❌ ERROR: File document not found for URL {user_message_doc.file}")
+				continue
 			
-			# Extract file extension for file_type
-			file_name = file_doc.file_name or "unknown"
-			file_extension = os.path.splitext(file_name)[1].lstrip('.').lower()
-			if not file_extension:
-				file_extension = "unknown"
+			file_doc = frappe.get_doc("File", file_docs[0].name)
 			
-			files_data.append({
-				"file_name": file_name,
-				"file_content": base64_content
-			})
+			# Check file size (10MB limit = 10 * 1024 * 1024 bytes)
+			max_size = 10 * 1024 * 1024
+			if file_doc.file_size and file_doc.file_size > max_size:
+				print(f"⚠️ WARNING: File {file_doc.file_name} is too large ({file_doc.file_size} bytes > {max_size} bytes)")
+				continue
 			
-			print(f"✅ FILE PROCESSED: {file_name} ({len(base64_content)} chars base64, type: {file_extension})")
+			# Get file content using Frappe's method
+			try:
+				file_content = file_doc.get_content()
+			except Exception as e:
+				print(f"❌ ERROR: Could not get file content: {str(e)}")
+				continue
+			
+			if file_content:
+				# Convert to base64
+				base64_content = base64.b64encode(file_content).decode('utf-8')
+				
+				# Extract file extension for file_type
+				file_name = file_doc.file_name or "unknown"
+				file_extension = os.path.splitext(file_name)[1].lstrip('.').lower()
+				if not file_extension:
+					file_extension = "unknown"
+				
+				files_data.append({
+					"file_name": file_name,
+					"file_content": base64_content
+				})
+				
+				print(f"✅ FILE PROCESSED: {file_name} ({len(base64_content)} chars base64, type: {file_extension})")
 		
 	except Exception as e:
 		print(f"❌ ERROR processing user message files: {str(e)}")
@@ -778,15 +843,22 @@ def process_user_message_files(user_message_doc):
 	return files_data
 
 
-def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None, thinking_message_id=None):
+def send_bot_response(channel_id, bot_name, user_message, user_message_doc=None, user_message_docs=None, thinking_message_id=None):
 	"""
 	Send a bot response by calling the chat API and polling for completion
+	Accepts either user_message_doc (single) or user_message_docs (list) for batch uploads
 	"""
 	print(f"🤖 SENDING BOT RESPONSE: Bot {bot_name} responding to '{user_message}'")
 	
 	# Process attached files if any
 	files_data = []
-	if user_message_doc:
+	# Handle batch upload case
+	if user_message_docs:
+		files_data = process_user_message_files(user_message_docs)
+		if files_data:
+			print(f"📎 PROCESSED {len(files_data)} file attachments for bot API (batch upload)")
+	# Handle single file case
+	elif user_message_doc:
 		files_data = process_user_message_files(user_message_doc)
 		if files_data:
 			print(f"📎 PROCESSED {len(files_data)} file attachments for bot API")

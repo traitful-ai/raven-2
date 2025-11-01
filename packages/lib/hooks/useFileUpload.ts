@@ -70,7 +70,11 @@ export default function useFileUpload(siteID: string, channelID: string) {
 
   const uploadFiles = async () => {
 
-    for (const f of files) {
+    const batch_id = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const batch_total = files.length
+
+    for (let index = 0; index < files.length; index++) {
+      const f = files[index]
       try {
 
         setFiles((prevFiles: CustomFile[]) => {
@@ -88,6 +92,9 @@ export default function useFileUpload(siteID: string, channelID: string) {
             otherData: {
               channelID: channelID,
               caption: f.caption ?? '',
+              batch_id: batch_id,
+              batch_index: index,
+              batch_total: batch_total
             },
             fieldname: 'file',
           },

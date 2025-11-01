@@ -54,6 +54,9 @@ export default function useFileUpload(channelID: string) {
   const uploadFiles = async (selectedMessage?: Message | null, caption?: string): Promise<RavenMessage[]> => {
     const newFiles = [...filesStateRef.current]
     if (newFiles.length > 0) {
+      const batch_id = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      const batch_total = newFiles.length
+      
       const promises: Promise<RavenMessage | null>[] = newFiles.map(async (f: CustomFile, index: number) => {
         return file.uploadFile(f,
           {
@@ -64,7 +67,10 @@ export default function useFileUpload(channelID: string) {
               compressImages: compressImages,
               is_reply: index === 0 ? selectedMessage ? 1 : 0 : 0,
               linked_message: index === 0 ? selectedMessage ? selectedMessage.name : null : null,
-              caption: index === 0 && caption ? caption : ""
+              caption: index === 0 && caption ? caption : "",
+              batch_id: batch_id,
+              batch_index: index,
+              batch_total: batch_total
             },
             fieldname: 'file',
           },

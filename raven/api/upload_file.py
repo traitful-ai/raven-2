@@ -176,8 +176,41 @@ def upload_file_with_message():
 	message_doc.save()
 
 	# Check if we need to send a bot response (for DM with bots)
-	from raven.api.raven_message import check_and_send_bot_response
-	channel = frappe.get_doc("Raven Channel", message_doc.channel_id)
-	check_and_send_bot_response(channel, message_doc.channel_id, message_doc.text or "", message_doc)
+	# Only trigger the bot response if this is the last file in a batch
+	batch_id = frappe.form_dict.get("batch_id")
+	batch_index = frappe.form_dict.get("batch_index")
+	batch_total = frappe.form_dict.get("batch_total")
+	
+	# Check if this is part of a batch upload
+	is_batch_upload = batch_id and batch_total
+	
+	if is_batch_upload:
+		# Convert to integers for comparison
+		batch_index = int(batch_index) if batch_index else 0
+		batch_total = int(batch_total) if batch_total else 1
+		
+		# Only trigger bot response for the last file in the batch
+		is_last_file = batch_index == batch_total - 1
+		
+		if is_last_file:
+			from raven.api.raven_message import check_and_send_bot_response_for_batch
+			channel = frappe.get_doc("Raven Channel", message_doc.channel_id)
+			# Get all messages in this batch
+			batch_messages = frappe.get_all(
+				"Raven Message",
+				filters={
+					"channel_id": message_doc.channel_id,
+					"creation": [">=", frappe.utils.add_to_date(frappe.utils.now(), seconds=-30)]
+				},
+				order_by="creation asc",
+				limit=batch_total
+			)
+			batch_message_docs = [frappe.get_doc("Raven Message", msg.name) for msg in batch_messages[-batch_total:]]
+			check_and_send_bot_response_for_batch(channel, message_doc.channel_id, message_doc.text or "", batch_message_docs)
+	else:
+		# Single file upload - use the regular check
+		from raven.api.raven_message import check_and_send_bot_response
+		channel = frappe.get_doc("Raven Channel", message_doc.channel_id)
+		check_and_send_bot_response(channel, message_doc.channel_id, message_doc.text or "", message_doc)
 
 	return message_doc
